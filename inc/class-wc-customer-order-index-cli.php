@@ -20,10 +20,11 @@ if( defined( 'WP_CLI' ) && WP_CLI && !class_exists( 'WC_Customer_Order_Index_CLI
 
             update_option( $this->cli_kill_switch, 0 );
 
-            $count_sql    = $wpdb->prepare( "select count(1) from {$wpdb->posts} where post_type = %s order by post_date desc", 'shop_order' );
+            $count_sql    = "SELECT COUNT(1) FROM {$wpdb->posts} WHERE post_type IN ('" . implode( "','", wc_get_order_types( 'reports' ) ) . "') ORDER BY post_date DESC";
             $order_count  = $wpdb->get_var( $count_sql );
 
-            $orders_sql   = $wpdb->prepare( "select ID from {$wpdb->posts} where post_type = %s order by post_date desc", 'shop_order' );
+            $orders_sql   = "SELECT ID FROM {$wpdb->posts} WHERE post_type IN ('" . implode( "','", wc_get_order_types( 'reports' ) ) . "') ORDER BY post_date DESC";
+
             $orders_page  = 1;
             $orders_batch = isset( $assoc_args['batch'] ) ? absint( $assoc_args['batch'] ) : 10000;
             $total_pages  = $order_count / $orders_batch;
@@ -61,7 +62,7 @@ if( defined( 'WP_CLI' ) && WP_CLI && !class_exists( 'WC_Customer_Order_Index_CLI
         private function should_kill_cli() {
             global $wpdb;
 
-            $sql         = $wpdb->prepare( 'select option_value from wp_options where option_name = %s;', $this->cli_kill_switch );
+            $sql         = $wpdb->prepare( "SELECT option_value FROM {$wpdb->options} WHERE option_name = %s;", $this->cli_kill_switch );
             $should_kill = absint( $wpdb->get_var( $sql ) );
 
             return $should_kill > 0 ? true : false;
