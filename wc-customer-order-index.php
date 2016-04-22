@@ -33,6 +33,18 @@ if( !class_exists( 'WC_Customer_Order_Index' ) ) :
             // Hook into add/update post meta to keep index updated on the fly
             add_action( 'add_post_meta', array( $this, 'update_index_from_meta' ), 10, 3 );
             add_action( 'update_post_meta', array( $this, 'update_index_from_meta_update' ), 10, 4 );
+
+            // Add query vars
+            add_filter( 'query_vars', array( $this, 'add_query_vars' ) , 10, 1 );
+
+            // Patch the customer orders query
+            add_filter( 'woocommerce_my_account_my_orders_query', array( $this, 'my_orders_query'), 10, 1 );
+
+            // Enable filters if needed so that the join works
+            add_action( 'pre_get_posts', array( $this, 'enable_filters_if_wc_customer'), 10, 2 );
+
+            // Perform the useful query change
+            add_filter( 'posts_join', array( $this, 'wc_customer_query_join'), 10, 2 );
         }
 
         public function install() {
@@ -140,6 +152,60 @@ if( !class_exists( 'WC_Customer_Order_Index' ) ) :
             } else {
                 return array();
             }
+        }
+
+        /**
+         * Adds a custom query parameter
+         *
+         * @param  array $qvars Array of query vars
+         * @return array Array of query vars with the new ones appended
+         */
+        public function add_query_vars( $qvars ) {
+            $qvars[] = 'wc_customer_user';
+            return $qvars;
+        }
+
+        /**
+         * Changes the my_orders query in order to use the index
+         *
+         * @param  array $params Array of query parameters
+         * @return array Query parameters
+         */
+        public function my_orders_query( $params ) {
+            if(isset($params["meta_key"]) && $params["meta_key"] == "_customer_user") {
+                unset($params["meta_key"]);
+                unset($params["meta_value"]);
+                $params["wc_customer_user"] = get_current_user_id();
+            }
+            return $params;
+        }
+
+        /**
+         * Enables filters so that the join works
+         *
+         * @param  array $params Array of query parameters
+         * @return array Query parameters
+         */
+        public function enable_filters_if_wc_customer($wpq){
+            if(!empty($wpq->query_vars["wc_customer_user"]) && $wpq->query_vars["suppress_filters"]) {
+                $wpq->query_vars["suppress_filters"] = false;
+            }
+        }
+
+        /**
+         * Adds a custom join to use the new index
+         *
+         * @param  array $params Array of query parameters
+         * @return array Query parameters
+         */
+        public function wc_customer_query_join($join, $wp_query) {
+            global $wpdb;
+
+            if (!empty($wp_query->query_vars['wc_customer_user'])) {
+                $join .= $wpdb->prepare(" INNER JOIN {$wpdb->prefix}{$this->table_name} wc_cidx ON $wpdb->posts.ID = wc_cidx.order_id AND wc_cidx.user_id = %d ", $wp_query->query_vars['wc_customer_user']);
+            }
+
+            return $join;
         }
 
     }
