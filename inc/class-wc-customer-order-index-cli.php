@@ -44,8 +44,7 @@ if( defined( 'WP_CLI' ) && WP_CLI && !class_exists( 'WC_Customer_Order_Index_CLI
                         break;
                     }
 
-                    $user_id = get_post_meta( $order, '_customer_user', true );
-                    WC_COI()->update_index( $order, $user_id );
+                    WC_COI()->update_index( $order );
                     $progress->tick();
                 }
 

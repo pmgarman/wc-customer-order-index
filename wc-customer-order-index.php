@@ -31,8 +31,8 @@ if( !class_exists( 'WC_Customer_Order_Index' ) ) :
             require_once 'inc/class-wc-customer-order-index-cli.php';
 
             // Hook into add/update post meta to keep index updated on the fly
-            add_action( 'add_post_meta', array( $this, 'update_index_from_meta' ), 10, 3 );
-            add_action( 'update_post_meta', array( $this, 'update_index_from_meta_update' ), 10, 4 );
+            add_action( 'added_post_meta', array( $this, 'update_index_from_meta_add' ), 10, 4 );
+            add_action( 'updated_post_meta', array( $this, 'update_index_from_meta_update' ), 10, 4 );
 
             // Add query vars
             add_filter( 'query_vars', array( $this, 'add_query_vars' ) , 10, 1 );
@@ -72,9 +72,13 @@ if( !class_exists( 'WC_Customer_Order_Index' ) ) :
         }
 
         public function update_index_from_meta( $object_id, $meta_key, $meta_value ) {
-            if( 'shop_order' == get_post_type( $object_id ) && '_customer_user' == $meta_key ) {
-                $this->update_index( $object_id, absint( $meta_value ) );
+            if( 'shop_order' == get_post_type( $object_id ) && in_array( $meta_key, array('_customer_user', '_billing_email') ) ) {
+                $this->update_index( $object_id );
             }
+        }
+
+        public function update_index_from_meta_add( $meta_id, $object_id, $meta_key, $meta_value ) {
+            $this->update_index_from_meta( $object_id, $meta_key, $meta_value );
         }
 
         public function update_index_from_meta_update( $meta_id, $object_id, $meta_key, $meta_value ) {
@@ -88,14 +92,20 @@ if( !class_exists( 'WC_Customer_Order_Index' ) ) :
          * @param  int $user_id User ID
          * @return bool           If the index is updated, true will be returned. If no update was performed (either due to a failure or if the index was already up to date) false will be returned.
          */
-        public function update_index( $order_id, $user_id = null ) {
+        public function update_index( $order_id ) {
             global $wpdb;
+
+            $user_id = intval(get_post_meta($order_id, "_customer_user", true));
+            if(empty($user_id))
+                $user_id = 0;
 
             $customer_email = "";
 
-            $user_data = get_user_by("id", $user_id);
-            if($user_data)
-                $customer_email = $user_data->user_email;
+            if($user_id) {
+                $user_data = get_user_by("id", $user_id);
+                if($user_data)
+                    $customer_email = $user_data->user_email;
+            }
 
             $billing_email = get_post_meta($order_id, "_billing_email", true);
 
