@@ -45,9 +45,17 @@ if( !class_exists( 'WC_Customer_Order_Index' ) ) :
 
             // Perform the useful query change
             add_filter( 'posts_join', array( $this, 'wc_customer_query_join'), 10, 2 );
+            add_filter( 'posts_where', array( $this, 'wc_customer_query_where'), 10, 2 );
 
             // Perform the email search when searching an email in admin
             add_action( 'parse_query', array( $this, 'wc_email_search' ), 9 );
+
+            // Keep user email updated
+            add_action( "profile_update", array($this, "update_customer"));
+
+            // Hook into add/update user meta to keep customer name updated on the fly
+            add_action( "added_user_meta", array($this, "maybe_update_customer_name_add"), 10, 4 );
+            add_action( "updated_user_meta", array($this, "maybe_update_customer_name_update"), 10, 4 );
         }
 
         public function install() {
@@ -61,10 +69,16 @@ if( !class_exists( 'WC_Customer_Order_Index' ) ) :
               `user_id` int(11) DEFAULT NULL,
               `customer_email` varchar(175) DEFAULT NULL,
               `billing_email` varchar(175) DEFAULT NULL,
+              `customer_name` varchar(175) DEFAULT NULL,
+              `billing_name` varchar(175) DEFAULT NULL,
+              `shipping_name` varchar(175) DEFAULT NULL,
               PRIMARY KEY (`order_id`),
               KEY `user_id` (`user_id`),
               KEY `customer_email` (`customer_email`),
-              KEY `billing_email` (`billing_email`)
+              KEY `billing_email` (`billing_email`),
+              KEY `customer_name` (`customer_name`),
+              KEY `billing_name` (`billing_name`),
+              KEY `shipping_name` (`shipping_name`)
             ) $charset_collate;";
 
             require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
@@ -72,7 +86,7 @@ if( !class_exists( 'WC_Customer_Order_Index' ) ) :
         }
 
         public function update_index_from_meta( $object_id, $meta_key, $meta_value ) {
-            if( 'shop_order' == get_post_type( $object_id ) && in_array( $meta_key, array('_customer_user', '_billing_email') ) ) {
+            if( 'shop_order' == get_post_type( $object_id ) && in_array( $meta_key, array('_customer_user', '_billing_email', '_billing_first_name', '_billing_last_name', '_shipping_first_name', '_shipping_last_name') ) ) {
                 $this->update_index( $object_id );
             }
         }
@@ -100,20 +114,26 @@ if( !class_exists( 'WC_Customer_Order_Index' ) ) :
                 $user_id = 0;
 
             $customer_email = "";
+            $customer_name = "";
 
             if($user_id) {
                 $user_data = get_user_by("id", $user_id);
-                if($user_data)
+                if($user_data){
                     $customer_email = $user_data->user_email;
+                    $customer_name = trim($user_data->first_name . " " . $user_data->last_name);
+                }
             }
 
             $billing_email = get_post_meta($order_id, "_billing_email", true);
 
+            $billing_name = trim(get_post_meta($order_id, "_billing_first_name", true) . " " . get_post_meta($order_id, "_billing_last_name", true));
+            $shipping_name = trim(get_post_meta($order_id, "_shipping_first_name", true) . " " . get_post_meta($order_id, "_shipping_last_name", true));
+
             $sql = $wpdb->prepare( 
-                "INSERT INTO {$wpdb->prefix}{$this->table_name} (`order_id`,`user_id`,`customer_email`,`billing_email`) 
-                VALUES (%d, %d, %s, %s) ON DUPLICATE KEY UPDATE `user_id` = %d, `customer_email` = %s, `billing_email` = %s;", 
-                $order_id, $user_id, $customer_email, $billing_email, 
-                $user_id, $customer_email, $billing_email );
+                "INSERT INTO {$wpdb->prefix}{$this->table_name} (`order_id`,`user_id`,`customer_email`,`billing_email`,`customer_name`,`billing_name`,`shipping_name`) 
+                VALUES (%d, %d, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE `user_id` = %d, `customer_email` = %s, `billing_email` = %s, `customer_name` = %s, `billing_name` = %s, `shipping_name` = %s;", 
+                $order_id, $user_id, $customer_email, $billing_email, $customer_name, $billing_name, $shipping_name, 
+                $user_id, $customer_email, $billing_email, $customer_name, $billing_name, $shipping_name );
 
             $result = $wpdb->query( $sql );
             if( !is_wp_error( $result ) ) {
@@ -121,6 +141,41 @@ if( !class_exists( 'WC_Customer_Order_Index' ) ) :
             } else {
                 return false;
             }
+        }
+
+        /**
+         * Action that gets executed when a user profile gets updated
+         *
+         * @param  int $user_id User ID
+         */
+        public function update_customer($user_id) {
+            global $wpdb;
+            $user = get_user_by("id", $user_id);
+            $sql = $wpdb->prepare( 
+                "UPDATE {$wpdb->prefix}{$this->table_name} SET `customer_email` = %s, `customer_name` = %s WHERE `user_id` = %d",
+                $user->user_email, trim($user->first_name . " " . $user->last_name), $user_id
+            ); 
+
+            $result = $wpdb->query( $sql );
+            if( !is_wp_error( $result ) ) {
+                return (bool)$result;
+            } else {
+                return false;
+            }
+        }
+
+        public function maybe_update_customer_name( $object_id, $meta_key, $meta_value ) {
+            if( 'shop_order' == get_post_type( $object_id ) && in_array( $meta_key, array( 'first_name', 'last_name' ) ) ) {
+                $this->update_customer( $object_id );
+            }
+        }
+
+        public function maybe_update_customer_name_add( $meta_id, $object_id, $meta_key, $meta_value ) {
+            $this->maybe_update_customer_name( $object_id, $meta_key, $meta_value );
+        }
+
+        public function maybe_update_customer_name_update( $meta_id, $object_id, $meta_key, $meta_value ) {
+            $this->maybe_update_customer_name( $object_id, $meta_key, $meta_value );
         }
 
         /**
@@ -193,6 +248,8 @@ if( !class_exists( 'WC_Customer_Order_Index' ) ) :
         public function add_query_vars( $qvars ) {
             $qvars[] = 'wc_customer_user';
             $qvars[] = 'wc_customer_email';
+            $qvars[] = 'wc_customer_name';
+            $qvars[] = 'wc_order_id';
             return $qvars;
         }
 
@@ -218,7 +275,12 @@ if( !class_exists( 'WC_Customer_Order_Index' ) ) :
          * @return array Query parameters
          */
         public function enable_filters_if_wc_customer($wpq){
-            if( ( !empty($wpq->query_vars["wc_customer_user"]) || !empty($wpq->query_vars["wc_customer_email"]) ) && $wpq->query_vars["suppress_filters"]) {
+            if( ( 
+                    !empty($wpq->query_vars["wc_customer_user"]) || 
+                    !empty($wpq->query_vars["wc_customer_email"]) || 
+                    !empty($wpq->query_vars["wc_customer_name"]) || 
+                    !empty($wpq->query_vars["wc_order_id"]) 
+                ) && $wpq->query_vars["suppress_filters"]) {
                 $wpq->query_vars["suppress_filters"] = false;
             }
         }
@@ -232,17 +294,49 @@ if( !class_exists( 'WC_Customer_Order_Index' ) ) :
         public function wc_customer_query_join($join, $wp_query) {
             global $wpdb;
 
+            if (
+                !empty($wp_query->query_vars['wc_customer_user']) || 
+                !empty($wp_query->query_vars['wc_customer_email']) || 
+                !empty($wp_query->query_vars['wc_customer_name']) || 
+                !empty($wp_query->query_vars['wc_order_id'])
+                ) {
+                $join .= " INNER JOIN {$wpdb->prefix}{$this->table_name} wc_cidx ON $wpdb->posts.ID = wc_cidx.order_id ";
+            }
+
+
+            return $join;
+        }
+
+        /**
+         * Use the join and add necessary where conditions
+         *
+         * @param  array $params Array of query parameters
+         * @return array Query parameters
+         */
+        public function wc_customer_query_where($where, $wp_query) {
+            global $wpdb;
             if (!empty($wp_query->query_vars['wc_customer_user'])) {
-                $join .= $wpdb->prepare(" INNER JOIN {$wpdb->prefix}{$this->table_name} wc_cidx ON $wpdb->posts.ID = wc_cidx.order_id AND wc_cidx.user_id = %d ", $wp_query->query_vars['wc_customer_user']);
+                $where .= $wpdb->prepare(" AND wc_cidx.user_id = %d ", $wp_query->query_vars['wc_customer_user']);
             }
             if (!empty($wp_query->query_vars['wc_customer_email'])) {
-                $join .= $wpdb->prepare(" INNER JOIN {$wpdb->prefix}{$this->table_name} wc_cidx_2 ON $wpdb->posts.ID = wc_cidx_2.order_id AND ( wc_cidx_2.customer_email = %s OR wc_cidx_2.billing_email = %s )", 
+                $where .= $wpdb->prepare(" AND ( wc_cidx.customer_email = %s OR wc_cidx.billing_email = %s ) ", 
                     $wp_query->query_vars['wc_customer_email'], 
                     $wp_query->query_vars['wc_customer_email']
                 );
             }
+            if (!empty($wp_query->query_vars['wc_customer_name'])) {
+                $name = "%".$wpdb->esc_like($wp_query->query_vars['wc_customer_name'])."%";
+                $where .= $wpdb->prepare(" AND ( wc_cidx.customer_name LIKE %s OR wc_cidx.billing_name LIKE %s OR wc_cidx.shipping_name LIKE %s ) ", 
+                    $name, 
+                    $name, 
+                    $name
+                );
+            }
+            if (!empty($wp_query->query_vars['wc_order_id'])) {
+                $where .= $wpdb->prepare(" AND wc_cidx.order_id = %d ", $wp_query->query_vars['wc_order_id']);
+            }
 
-            return $join;
+            return $where;
         }
 
         /**
@@ -257,16 +351,33 @@ if( !class_exists( 'WC_Customer_Order_Index' ) ) :
                 return;
             }
 
-            if ( is_email($_GET["s"]) ) {
+            $search = trim($wpq->query_vars["s"]);
+
+            $processing = false;
+
+            if( substr($search, 0, 1) == "#" ) {
+                $processing = true;
+                $wpq->query_vars['wc_order_id'] = substr($search, 1);
+            }
+
+            if ( is_email($search) ) {
+                $processing = true;
+                $wpq->query_vars['wc_customer_email'] = $search;
+            }
+
+            if( substr($search, 0, 5) == "name:" ) {
+                $processing = true;
+                $wpq->query_vars['wc_customer_name'] = trim(substr($search, 5));
+            }
+
+            if ( $processing ) {
                 // Remove "s" - we don't want to search order name.
                 unset( $wpq->query_vars['s'] );
 
                 // so we know we're doing this.
                 $wpq->query_vars['shop_order_search'] = true;
-
-                // use this index parameter.
-                $wpq->query_vars['wc_customer_email'] = $_GET["s"];
             }
+            
             return $wpq;
         }
 
