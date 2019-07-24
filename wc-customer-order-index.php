@@ -56,6 +56,10 @@ if( !class_exists( 'WC_Customer_Order_Index' ) ) :
 			// Hook into add/update user meta to keep customer name updated on the fly
 			add_action( "added_user_meta", array($this, "maybe_update_customer_name_add"), 10, 4 );
 			add_action( "updated_user_meta", array($this, "maybe_update_customer_name_update"), 10, 4 );
+
+			// WC 3.0 Data Store Patch
+			add_filter("woocommerce_order_data_store_cpt_get_orders_query", array($this, "order_data_store_cpt"), 10, 3);
+			add_filter("woocommerce_customer_get_total_spent_query", array($this, "money_spent_query"), 10, 2 );
 		}
 
 		public function install() {
@@ -261,11 +265,52 @@ if( !class_exists( 'WC_Customer_Order_Index' ) ) :
 		 */
 		public function my_orders_query( $params ) {
 			if(isset($params["meta_key"]) && $params["meta_key"] == "_customer_user") {
+				$params["wc_customer_user"] = $params["meta_value"];
 				unset($params["meta_key"]);
 				unset($params["meta_value"]);
-                $params["wc_customer_user"] = get_current_user_id();
+			}
+			if(isset($params["customer"]) && !empty($params["customer"])) {
+				$params["wc_customer_user"] = $params["customer"];
+				if ( !version_compare( WC_VERSION, '2.7', '<' ) ) { 
+					$data_store = WC_Data_Store::load( 'order' );
+					if($data_store->get_current_class_name() == "WC_Order_Data_Store_CPT") {
+						unset($params["customer"]);
+					}
+				}
 			}
 			return $params;
+		}
+
+		/**
+		 * Changes the queries to the CPT data store for orders (WC 3.0 and above)
+		 *
+		 * @param  array $params Array of query parameters
+		 * @return array Query parameters
+		 */
+		public function order_data_store_cpt( $query, $args, $data_store) {
+			if(isset($args["wc_customer_user"])) {
+				$query["wc_customer_user"] = $args["wc_customer_user"];
+			}
+			if(isset($args["customer"]) && !empty($args["customer"])) {
+				$query["wc_customer_user"] = $args["customer"];
+			}
+			
+			return $query;
+		}
+
+		public function money_spent_query( $query, $customer ) {
+			global $wpdb;
+
+            $statuses = array_map( 'esc_sql', wc_get_is_paid_statuses() );
+
+            return "SELECT SUM(meta2.meta_value)
+                FROM $wpdb->posts as posts
+                INNER JOIN {$wpdb->prefix}{$this->table_name} wccoi ON posts.ID = wccoi.order_id AND wccoi.user_id = '" . esc_sql( $customer->get_id() ) . "'
+                LEFT JOIN {$wpdb->postmeta} AS meta2 ON posts.ID = meta2.post_id
+                WHERE   posts.post_type     = 'shop_order'
+                AND     posts.post_status   IN ( 'wc-" . implode( "','wc-", $statuses ) . "' )
+                AND     meta2.meta_key      = '_order_total'
+            ";
 		}
 
 		/**
