@@ -1,11 +1,11 @@
 <?php // phpcs:ignore WordPress.Files.FileName
 /**
  * Plugin Name:     WooCommerce - Customer Order Index
- * Plugin URI:      http://garman.io
+ * Plugin URI:      https://saucal.com
  * Description:     Create a more scalable index of orders and the associated customers.
- * Version:         1.0.0
- * Author:          Patrick Garman
- * Author URI:      http://pmgarman.me
+ * Version:         2.0.0
+ * Author:          SAU/CAL
+ * Author URI:      https://saucal.com
  * Text Domain:     wc-customer-order-index
  */
 
