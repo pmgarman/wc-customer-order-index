@@ -133,7 +133,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			  KEY `billing_postcode` (`billing_postcode`),
 			  KEY `shipping_postcode` (`shipping_postcode`)
 			) $charset_collate;";
-			dbDelta( $sql );
+			dbDelta( $sql ); // phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.dbDelta_dbdelta
 
 			$table_name = $wpdb->prefix . 'woocommerce_customer_subscription_index';
 
@@ -153,11 +153,11 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 				KEY `end_date` (`end_date`),
 				KEY `last_payment_date` (`last_payment_date`)
 			) $charset_collate;";
-			dbDelta( $sql );
+			dbDelta( $sql ); // phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.dbDelta_dbdelta
 		}
 
 		public function update_index_from_meta( $object_id, $meta_key, $meta_value ) {
-			if ( ! in_array( get_post_type( $object_id ), array( 'shop_order', 'shop_subscription' ) ) ) {
+			if ( ! in_array( get_post_type( $object_id ), array( 'shop_order', 'shop_subscription' ), true ) ) {
 				return;
 			}
 			if ( in_array( $meta_key, array( '_customer_user', '_order_total', '_billing_email', '_billing_first_name', '_billing_last_name', '_shipping_first_name', '_shipping_last_name', '_order_number', '_billing_city', '_shipping_city', '_billing_postcode', '_shipping_postcode' ), true ) ) {
@@ -188,7 +188,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 
 			$this->update_index_order( $order );
 
-			if ( 'shop_subscription' == $order->order_type ) {
+			if ( 'shop_subscription' === $order->order_type ) {
 				$this->update_index_subscription( $order );
 			} elseif ( function_exists( 'wcs_get_subscriptions_for_order' ) ) {
 				$subs = wcs_get_subscriptions_for_order( $order );
@@ -352,7 +352,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 		}
 
 		public function maybe_update_customer_name( $object_id, $meta_key, $meta_value ) {
-			if ( in_array( get_post_type( $object_id ), array( 'shop_order', 'shop_subscription' ) ) && in_array( $meta_key, array( 'first_name', 'last_name' ) ) ) {
+			if ( in_array( get_post_type( $object_id ), array( 'shop_order', 'shop_subscription' ), true ) && in_array( $meta_key, array( 'first_name', 'last_name' ), true ) ) {
 				$this->update_customer( $object_id );
 			}
 		}
@@ -699,7 +699,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			}
 
 			global $pagenow;
-			if ( 'edit.php' !== $pagenow || empty( $wpq['orderby'] ) || ! in_array( $wpq['post_type'], array( 'shop_subscription' ) ) ) {
+			if ( 'edit.php' !== $pagenow || empty( $wpq['orderby'] ) || ! in_array( $wpq['post_type'], array( 'shop_subscription' ), true ) ) {
 				return $wpq;
 			}
 
@@ -729,7 +729,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 		 */
 		public function wc_email_search( $wpq ) {
 			global $pagenow;
-			if ( 'edit.php' != $pagenow || empty( $wpq->query_vars['s'] ) || ! in_array( $wpq->query_vars['post_type'], array( 'shop_order', 'shop_subscription' ) ) ) {
+			if ( 'edit.php' !== $pagenow || empty( $wpq->query_vars['s'] ) || ! in_array( $wpq->query_vars['post_type'], array( 'shop_order', 'shop_subscription' ), true ) ) {
 				return;
 			}
 
