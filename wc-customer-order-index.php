@@ -87,7 +87,16 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			add_filter( 'woocommerce_order_data_store_cpt_get_orders_query', array( $this, 'order_data_store_cpt' ), 10, 3 );
 			add_filter( 'woocommerce_customer_get_total_spent_query', array( $this, 'money_spent_query' ), 10, 2 );
 
+			add_filter( 'woocommerce_customer_data_store', array( $this, 'maybe_replace_datastore' ) );
 			add_filter( 'wcs_get_cached_users_subscription_ids', array( $this, 'get_user_subscriptions' ), 10, 2 );
+		}
+
+		public function maybe_replace_datastore( $store ) {
+			if ( 'WC_Customer_Data_Store' === $store || $store instanceof WC_Customer_Data_Store ) {
+				require_once 'class-wc-customer-data-store-performant.php';
+				$store = 'WC_Customer_Data_Store_Performant';
+			}
+			return $store;
 		}
 
 		public function install() {
