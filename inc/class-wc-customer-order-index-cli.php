@@ -115,6 +115,10 @@ if ( ! class_exists( 'WC_Customer_Order_Index_CLI' ) ) {
 			update_option( $this->cli_status_option, sprintf( __( '%1$s: %2$d of %3$d order batches updated', 'wc-customer-order-index' ), date( 'Y-m-d H:i:s' ), $current, $total ) );
 		}
 
+		public function install() {
+			WC_COI()->install();
+		}
+
 	}
 
 	WP_CLI::add_command( 'wc_coi', 'WC_Customer_Order_Index_CLI' );
