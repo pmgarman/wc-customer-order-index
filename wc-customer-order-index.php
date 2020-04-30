@@ -20,6 +20,8 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 
 		public $table_name = 'woocommerce_customer_order_index';
 
+		public $table_name_subs = 'woocommerce_customer_subscription_index';
+
 		/**
 		 * The singleton instance of the plugin.
 		 *
@@ -68,9 +70,11 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			// Perform the useful query change
 			add_filter( 'posts_join', array( $this, 'wc_customer_query_join' ), 10, 2 );
 			add_filter( 'posts_where', array( $this, 'wc_customer_query_where' ), 10, 2 );
+			add_filter( 'posts_orderby', array( $this, 'wc_customer_query_orderby' ), 10, 2 );
 
 			// Perform the email search when searching an email in admin
 			add_action( 'parse_query', array( $this, 'wc_email_search' ), 9 );
+			add_action( 'request', array( $this, 'wc_subscription_sort' ), 9 );
 
 			// Keep user email updated
 			add_action( 'profile_update', array( $this, 'update_customer' ) );
@@ -82,10 +86,14 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			// WC 3.0 Data Store Patch
 			add_filter( 'woocommerce_order_data_store_cpt_get_orders_query', array( $this, 'order_data_store_cpt' ), 10, 3 );
 			add_filter( 'woocommerce_customer_get_total_spent_query', array( $this, 'money_spent_query' ), 10, 2 );
+
+			add_filter( 'wcs_get_cached_users_subscription_ids', array( $this, 'get_user_subscriptions' ), 10, 2 );
 		}
 
 		public function install() {
 			global $wpdb;
+
+			require_once ABSPATH . 'wp-admin/includes/upgrade.php';
 
 			$table_name      = $wpdb->prefix . 'woocommerce_customer_order_index';
 			$charset_collate = $wpdb->get_charset_collate();
@@ -116,16 +124,37 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			  KEY `billing_postcode` (`billing_postcode`),
 			  KEY `shipping_postcode` (`shipping_postcode`)
 			) $charset_collate;";
+			dbDelta( $sql );
 
-			require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-			dbDelta( $sql ); // phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.dbDelta_dbdelta
+			$table_name = $wpdb->prefix . 'woocommerce_customer_subscription_index';
+
+			$sql = "CREATE TABLE $table_name (
+				`subscription_id` int(11) unsigned NOT NULL,
+				`order_total` DECIMAL(10,4) DEFAULT NULL,
+				`start_date` DATETIME DEFAULT NULL,
+				`trial_end_date` DATETIME DEFAULT NULL,
+				`next_payment_date` DATETIME DEFAULT NULL,
+				`end_date` DATETIME DEFAULT NULL,
+				`last_payment_date` DATETIME DEFAULT NULL,
+				PRIMARY KEY (`subscription_id`),
+				KEY `order_total` (`order_total`),
+				KEY `start_date` (`start_date`),
+				KEY `trial_end_date` (`trial_end_date`),
+				KEY `next_payment_date` (`next_payment_date`),
+				KEY `end_date` (`end_date`),
+				KEY `last_payment_date` (`last_payment_date`)
+			) $charset_collate;";
+			dbDelta( $sql );
 		}
 
 		public function update_index_from_meta( $object_id, $meta_key, $meta_value ) {
-			if ( 'shop_order' !== get_post_type( $object_id ) ) {
+			if ( ! in_array( get_post_type( $object_id ), array( 'shop_order', 'shop_subscription' ) ) ) {
 				return;
 			}
 			if ( in_array( $meta_key, array( '_customer_user', '_order_total', '_billing_email', '_billing_first_name', '_billing_last_name', '_shipping_first_name', '_shipping_last_name', '_order_number', '_billing_city', '_shipping_city', '_billing_postcode', '_shipping_postcode' ), true ) ) {
+				$this->update_index( $object_id );
+			}
+			if ( strpos( $meta_key, '_schedule' ) === 0 ) {
 				$this->update_index( $object_id );
 			}
 		}
@@ -136,6 +165,62 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 
 		public function update_index_from_meta_update( $meta_id, $object_id, $meta_key, $meta_value ) {
 			$this->update_index_from_meta( $object_id, $meta_key, $meta_value );
+		}
+
+		/**
+		 * Update order index
+		 *
+		 * @param  int $order_id Order ID
+		 * @param  int $user_id User ID
+		 * @return bool           If the index is updated, true will be returned. If no update was performed (either due to a failure or if the index was already up to date) false will be returned.
+		 */
+		public function update_index( $order_id ) {
+			$order = wc_get_order( $order_id );
+
+			$this->update_index_order( $order );
+
+			if ( 'shop_subscription' == $order->order_type ) {
+				$this->update_index_subscription( $order );
+			} elseif ( function_exists( 'wcs_get_subscriptions_for_order' ) ) {
+				$subs = wcs_get_subscriptions_for_order( $order );
+				if ( ! empty( $subs ) ) {
+					foreach ( $subs as $sub ) {
+						$this->update_index_subscription( $sub );
+					}
+				}
+			}
+		}
+
+		public function update_index_subscription( $order ) {
+			if ( doing_action( 'woocommerce_checkout_order_processed' ) ) {
+				$last_order_created = new WC_DateTime();
+			} else {
+				$last_order_created = $order->get_date( 'last_order_date_created' );
+			}
+
+			global $wpdb;
+			$fields = array(
+				'order_total'       => $order->get_total( 'edit' ),
+				'last_payment_date' => $last_order_created,
+				'start_date'        => $order->get_date( 'date_created' ),
+				'trial_end_date'    => $order->get_date( 'trial_end' ),
+				'next_payment_date' => $order->get_date( 'next_payment' ),
+				'end_date'          => $order->get_date( 'end' ),
+			);
+
+			$escape = array(
+				'subscription_id' => '%d',
+				'order_total'     => '%d',
+			);
+
+			return $this->insert_helper(
+				$wpdb->prefix . $this->table_name_subs,
+				$fields,
+				array(
+					'subscription_id' => $order->get_id(),
+				),
+				$escape
+			);
 		}
 
 		public function insert_helper( $table, $fields, $primary, $escape ) {
@@ -171,19 +256,12 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			}
 		}
 
-		/**
-		 * Update order index
-		 *
-		 * @param  int $order_id Order ID
-		 * @param  int $user_id User ID
-		 * @return bool           If the index is updated, true will be returned. If no update was performed (either due to a failure or if the index was already up to date) false will be returned.
-		 */
-		public function update_index( $order_id ) {
+		public function update_index_order( $order ) {
 			global $wpdb;
 
-			$user_id = intval( get_post_meta( $order_id, '_customer_user', true ) );
+			$order_id = $order->get_id();
 
-			$order = get_order( $order_id );
+			$user_id = intval( $order->get_customer_id() );
 			if ( empty( $user_id ) ) {
 				$user_id = 0;
 			}
@@ -265,7 +343,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 		}
 
 		public function maybe_update_customer_name( $object_id, $meta_key, $meta_value ) {
-			if ( 'shop_order' === get_post_type( $object_id ) && in_array( $meta_key, array( 'first_name', 'last_name' ), true ) ) {
+			if ( in_array( get_post_type( $object_id ), array( 'shop_order', 'shop_subscription' ) ) && in_array( $meta_key, array( 'first_name', 'last_name' ) ) ) {
 				$this->update_customer( $object_id );
 			}
 		}
@@ -353,6 +431,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			$qvars[] = 'wc_customer_city';
 			$qvars[] = 'wc_full_search';
 			$qvars[] = 'wc_order_id';
+			$qvars[] = 'wcs_orderby';
 			return $qvars;
 		}
 
@@ -453,6 +532,12 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 				$join .= " INNER JOIN {$wpdb->prefix}{$this->table_name} wc_cidx ON $wpdb->posts.ID = wc_cidx.order_id ";
 			}
 
+			if (
+				! empty( $wp_query->query_vars['wcs_orderby'] )
+				) {
+				$join .= " INNER JOIN {$wpdb->prefix}{$this->table_name_subs} wc_cidx_subs ON $wpdb->posts.ID = wc_cidx_subs.subscription_id ";
+			}
+
 			return $join;
 		}
 
@@ -474,6 +559,15 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			}
 
 			return $like;
+		}
+
+		public function wc_customer_query_orderby( $orderby, $wpq ) {
+			if ( ! empty( $wpq->query_vars['wcs_orderby'] ) ) {
+				$by      = $wpq->query_vars['wcs_orderby'];
+				$order   = isset( $wpq->query_vars['order'] ) ? $wpq->query_vars['order'] : 'DESC';
+				$orderby = 'wc_cidx_subs.' . $by . ' ' . $order;
+			}
+			return $orderby;
 		}
 
 		/**
@@ -588,6 +682,36 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			return $where;
 		}
 
+		public function wc_subscription_sort( $wpq ) {
+			global $typenow;
+
+			if ( 'shop_subscription' !== $typenow ) {
+				return $wpq;
+			}
+
+			global $pagenow;
+			if ( 'edit.php' !== $pagenow || empty( $wpq['orderby'] ) || ! in_array( $wpq['post_type'], array( 'shop_subscription' ) ) ) {
+				return $wpq;
+			}
+
+			switch ( $wpq['orderby'] ) {
+				case 'order_total':
+				case 'last_payment_date':
+				case 'start_date':
+				case 'trial_end_date':
+				case 'next_payment_date':
+				case 'end_date':
+					$wpq['wcs_orderby'] = $wpq['orderby'];
+					unset( $wpq['orderby'] );
+
+					// so we know we're doing this.
+					$wpq['shop_subscription_sort'] = true;
+					break;
+			}
+
+			return $wpq;
+		}
+
 		/**
 		 * Enables email only search within the index table
 		 *
@@ -596,7 +720,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 		 */
 		public function wc_email_search( $wpq ) {
 			global $pagenow;
-			if ( 'edit.php' !== $pagenow || empty( $wpq->query_vars['s'] ) || 'shop_order' !== $wpq->query_vars['post_type'] ) {
+			if ( 'edit.php' != $pagenow || empty( $wpq->query_vars['s'] ) || ! in_array( $wpq->query_vars['post_type'], array( 'shop_order', 'shop_subscription' ) ) ) {
 				return;
 			}
 
@@ -674,6 +798,10 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			}
 
 			return $wpq;
+		}
+
+		public function get_user_subscriptions( $ids, $user_id ) {
+			return $this->get_customers_orders( $user_id, 'shop_subscription' );
 		}
 
 	}

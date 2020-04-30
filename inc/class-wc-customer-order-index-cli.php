@@ -63,10 +63,22 @@ if ( ! class_exists( 'WC_Customer_Order_Index_CLI' ) ) {
 
 			update_option( $this->cli_kill_switch, 0 );
 
-			$count_sql   = $wpdb->prepare( "select count(1) from {$wpdb->posts} where post_type = %s order by post_date desc", 'shop_order' );
+			$type = $assoc_args['type'] ? $assoc_args['type'] : array( 'shop_order', 'shop_subscription' );
+			if ( is_string( $type ) ) {
+				$type = explode( ',', $type );
+				$type = array_map( 'trim', $type );
+			}
+
+			foreach ( $type as $i => $t ) {
+				$type[ $i ] = $wpdb->prepare( '%s', $t );
+			}
+
+			$type = implode( ',', $type );
+
+			$count_sql   = "select count(1) from {$wpdb->posts} where post_type IN ( {$type} ) order by ID asc";
 			$order_count = $wpdb->get_var( $count_sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
 
-			$orders_sql   = $wpdb->prepare( "select ID from {$wpdb->posts} where post_type = %s order by post_date desc", 'shop_order' );
+			$orders_sql   = "select ID from {$wpdb->posts} where post_type IN ( {$type} ) order by ID asc";
 			$orders_page  = 1;
 			$orders_batch = isset( $assoc_args['batch'] ) ? absint( $assoc_args['batch'] ) : 10000;
 			$total_pages  = $order_count / $orders_batch;
