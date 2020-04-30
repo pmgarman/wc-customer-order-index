@@ -92,19 +92,29 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 
 			$sql = "CREATE TABLE $table_name (
 			  `order_id` int(11) unsigned NOT NULL,
+			  `order_number` varchar(175) DEFAULT NULL,
 			  `user_id` int(11) DEFAULT NULL,
 			  `customer_email` varchar(175) DEFAULT NULL,
 			  `billing_email` varchar(175) DEFAULT NULL,
 			  `customer_name` varchar(175) DEFAULT NULL,
 			  `billing_name` varchar(175) DEFAULT NULL,
 			  `shipping_name` varchar(175) DEFAULT NULL,
+			  `billing_city` varchar(175) DEFAULT NULL,
+			  `shipping_city` varchar(175) DEFAULT NULL,
+			  `billing_postcode` varchar(175) DEFAULT NULL,
+			  `shipping_postcode` varchar(175) DEFAULT NULL,
 			  PRIMARY KEY (`order_id`),
+			  KEY `order_number` (`order_number`),
 			  KEY `user_id` (`user_id`),
 			  KEY `customer_email` (`customer_email`),
 			  KEY `billing_email` (`billing_email`),
 			  KEY `customer_name` (`customer_name`),
 			  KEY `billing_name` (`billing_name`),
-			  KEY `shipping_name` (`shipping_name`)
+			  KEY `shipping_name` (`shipping_name`),
+			  KEY `billing_city` (`billing_city`),
+			  KEY `shipping_city` (`shipping_city`),
+			  KEY `billing_postcode` (`billing_postcode`),
+			  KEY `shipping_postcode` (`shipping_postcode`)
 			) $charset_collate;";
 
 			require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -112,7 +122,10 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 		}
 
 		public function update_index_from_meta( $object_id, $meta_key, $meta_value ) {
-			if ( 'shop_order' === get_post_type( $object_id ) && in_array( $meta_key, array( '_customer_user', '_billing_email', '_billing_first_name', '_billing_last_name', '_shipping_first_name', '_shipping_last_name' ), true ) ) {
+			if ( 'shop_order' !== get_post_type( $object_id ) ) {
+				return;
+			}
+			if ( in_array( $meta_key, array( '_customer_user', '_order_total', '_billing_email', '_billing_first_name', '_billing_last_name', '_shipping_first_name', '_shipping_last_name', '_order_number', '_billing_city', '_shipping_city', '_billing_postcode', '_shipping_postcode' ), true ) ) {
 				$this->update_index( $object_id );
 			}
 		}
@@ -123,6 +136,39 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 
 		public function update_index_from_meta_update( $meta_id, $object_id, $meta_key, $meta_value ) {
 			$this->update_index_from_meta( $object_id, $meta_key, $meta_value );
+		}
+
+		public function insert_helper( $table, $fields, $primary, $escape ) {
+			global $wpdb;
+			$fields_insert        = '`' . implode( '`, `', array_keys( $fields ) ) . '`';
+			$fields_insert_values = array();
+			$update_statement     = array();
+
+			foreach ( $fields as $key => $value ) {
+				$escape_as              = isset( $escape[ $key ] ) ? $escape[ $key ] : '%s';
+				$fields_insert_values[] = $wpdb->prepare( $escape_as, $value ); // phpcs:ignore WordPress.DB.PreparedSQL
+				$update_statement[]     = $wpdb->prepare( '`' . $key . '` = ' . $escape_as, $value ); // phpcs:ignore WordPress.DB.PreparedSQL, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare
+			}
+
+			$fields_insert_values = implode( ', ', $fields_insert_values );
+
+			foreach ( $primary as $k => $v ) {
+				$fields_insert        = '`' . $k . '`, ' . $fields_insert;
+				$escape_as            = isset( $escape[ $k ] ) ? $escape[ $k ] : '%s';
+				$fields_insert_values = $wpdb->prepare( $escape_as, $v ) . ', ' . $fields_insert_values; // phpcs:ignore WordPress.DB.PreparedSQL
+			}
+
+			$update_statement = implode( ', ', $update_statement );
+
+			$sql = "INSERT INTO {$table} ({$fields_insert})
+				VALUES ($fields_insert_values) ON DUPLICATE KEY UPDATE {$update_statement};";
+
+			$result = $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
+			if ( ! is_wp_error( $result ) ) {
+				return (bool) $result;
+			} else {
+				return false;
+			}
 		}
 
 		/**
@@ -136,6 +182,8 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			global $wpdb;
 
 			$user_id = intval( get_post_meta( $order_id, '_customer_user', true ) );
+
+			$order = get_order( $order_id );
 			if ( empty( $user_id ) ) {
 				$user_id = 0;
 			}
@@ -151,36 +199,46 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 				}
 			}
 
-			$billing_email = get_post_meta( $order_id, '_billing_email', true );
+			$order_number = $order->get_order_number();
 
-			$billing_name  = trim( get_post_meta( $order_id, '_billing_first_name', true ) . ' ' . get_post_meta( $order_id, '_billing_last_name', true ) );
-			$shipping_name = trim( get_post_meta( $order_id, '_shipping_first_name', true ) . ' ' . get_post_meta( $order_id, '_shipping_last_name', true ) );
+			$billing_email = $order->get_billing_email();
 
-			$sql = $wpdb->prepare(
-				// phpcs:ignore WordPress.DB.PreparedSQL
-				"INSERT INTO {$wpdb->prefix}{$this->table_name} (`order_id`,`user_id`,`customer_email`,`billing_email`,`customer_name`,`billing_name`,`shipping_name`) 
-				VALUES (%d, %d, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE `user_id` = %d, `customer_email` = %s, `billing_email` = %s, `customer_name` = %s, `billing_name` = %s, `shipping_name` = %s;",
-				$order_id,
-				$user_id,
-				$customer_email,
-				$billing_email,
-				$customer_name,
-				$billing_name,
-				$shipping_name,
-				$user_id,
-				$customer_email,
-				$billing_email,
-				$customer_name,
-				$billing_name,
-				$shipping_name
+			$billing_name  = trim( $order->get_billing_first_name() . ' ' . $order->get_billing_last_name() );
+			$shipping_name = trim( $order->get_shipping_first_name() . ' ' . $order->get_shipping_last_name() );
+
+			$billing_city  = trim( $order->get_billing_city() );
+			$shipping_city = trim( $order->get_shipping_city() );
+
+			$billing_postcode  = trim( $order->get_billing_postcode() );
+			$shipping_postcode = trim( $order->get_shipping_postcode() );
+
+			$fields = array(
+				'order_number'      => $order_number,
+				'user_id'           => $user_id,
+				'customer_email'    => $customer_email,
+				'billing_email'     => $billing_email,
+				'customer_name'     => $customer_name,
+				'billing_name'      => $billing_name,
+				'shipping_name'     => $shipping_name,
+				'billing_city'      => $billing_city,
+				'shipping_city'     => $shipping_city,
+				'billing_postcode'  => $billing_postcode,
+				'shipping_postcode' => $shipping_postcode,
 			);
 
-			$result = $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
-			if ( ! is_wp_error( $result ) ) {
-				return (bool) $result;
-			} else {
-				return false;
-			}
+			$escape = array(
+				'user_id'  => '%d',
+				'order_id' => '%d',
+			);
+
+			return $this->insert_helper(
+				$wpdb->prefix . $this->table_name,
+				$fields,
+				array(
+					'order_id' => $order_id,
+				),
+				$escape
+			);
 		}
 
 		/**
@@ -245,15 +303,15 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 		 * @param  int $user_id Customer's user ID
 		 * @return array           Array of all orders placed by customer
 		 */
-		public function get_customers_orders( $user_id ) {
+		public function get_customers_orders( $user_id, $type = 'shop_order' ) {
 			global $wpdb;
 
 			// Don't pull all guest orders this way, things may break.
-			if ( 0 === (int) $user_id ) {
+			if ( 0 === $user_id ) {
 				return array();
 			}
 
-			$sql    = $wpdb->prepare( "SELECT `order_id` FROM {$wpdb->prefix}{$this->table_name} WHERE `user_id` = %d ORDER BY `order_id` DESC", $user_id );  // phpcs:ignore WordPress.DB.PreparedSQL
+			$sql    = $wpdb->prepare( "SELECT `order_id` FROM {$wpdb->prefix}{$this->table_name} wc_coi INNER JOIN {$wpdb->posts} posts ON posts.ID = wc_coi.order_id WHERE `user_id` = %d AND posts.post_type = %s ORDER BY `order_id` DESC", $user_id, $type ); // phpcs:ignore WordPress.DB.PreparedSQL
 			$result = $wpdb->get_col( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
 
 			if ( ! is_wp_error( $result ) && is_array( $result ) ) {
@@ -291,6 +349,9 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			$qvars[] = 'wc_customer_user';
 			$qvars[] = 'wc_customer_email';
 			$qvars[] = 'wc_customer_name';
+			$qvars[] = 'wc_customer_postcode';
+			$qvars[] = 'wc_customer_city';
+			$qvars[] = 'wc_full_search';
 			$qvars[] = 'wc_order_id';
 			return $qvars;
 		}
@@ -362,8 +423,11 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 					! empty( $wpq->query_vars['wc_customer_user'] ) ||
 					! empty( $wpq->query_vars['wc_customer_email'] ) ||
 					! empty( $wpq->query_vars['wc_customer_name'] ) ||
+					! empty( $wpq->query_vars['wc_customer_postcode'] ) ||
+					! empty( $wpq->query_vars['wc_customer_city'] ) ||
+					! empty( $wpq->query_vars['wc_full_search'] ) ||
 					! empty( $wpq->query_vars['wc_order_id'] )
-				) && $wpq->query_vars['suppress_filters'] ) {
+				) && isset( $wpq->query_vars['suppress_filters'] ) ) {
 				$wpq->query_vars['suppress_filters'] = false; // phpcs:ignore WordPressVIPMinimum.Hooks.PreGetPosts
 			}
 		}
@@ -381,12 +445,35 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 				! empty( $wp_query->query_vars['wc_customer_user'] ) ||
 				! empty( $wp_query->query_vars['wc_customer_email'] ) ||
 				! empty( $wp_query->query_vars['wc_customer_name'] ) ||
+				! empty( $wp_query->query_vars['wc_customer_postcode'] ) ||
+				! empty( $wp_query->query_vars['wc_customer_city'] ) ||
+				! empty( $wp_query->query_vars['wc_full_search'] ) ||
 				! empty( $wp_query->query_vars['wc_order_id'] )
 				) {
 				$join .= " INNER JOIN {$wpdb->prefix}{$this->table_name} wc_cidx ON $wpdb->posts.ID = wc_cidx.order_id ";
 			}
 
 			return $join;
+		}
+
+		private function convert_to_like( $str ) {
+			global $wpdb;
+			$wild = '%';
+			if ( substr( $str, -1 ) === '*' ) {
+				$str = substr( $str, 0, -1 );
+			}
+			$begin = false;
+			if ( substr( $str, 0, 1 ) === '*' ) {
+				$begin = true;
+				$str   = substr( $str, 1 );
+			}
+			$like = $wpdb->esc_like( $str ) . $wild;
+
+			if ( $begin ) {
+				$like = $wild . $like;
+			}
+
+			return $like;
 		}
 
 		/**
@@ -397,27 +484,105 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 		 */
 		public function wc_customer_query_where( $where, $wp_query ) {
 			global $wpdb;
+
+			$columns = array(
+				'user_id'           => true,
+				'customer_email'    => true,
+				'billing_email'     => true,
+				'customer_name'     => true,
+				'billing_name'      => true,
+				'shipping_name'     => true,
+				'billing_postcode'  => true,
+				'shipping_postcode' => true,
+				'billing_city'      => true,
+				'shipping_city'     => true,
+				'order_id'          => true,
+				'order_number'      => true,
+			);
+
+			$parts = array();
 			if ( ! empty( $wp_query->query_vars['wc_customer_user'] ) ) {
-				$where .= $wpdb->prepare( ' AND wc_cidx.user_id = %d ', $wp_query->query_vars['wc_customer_user'] );
+				unset( $columns['user_id'] );
+				$parts[] = $wpdb->prepare( '( wc_cidx.user_id = %d )', $wp_query->query_vars['wc_customer_user'] );
 			}
 			if ( ! empty( $wp_query->query_vars['wc_customer_email'] ) ) {
-				$where .= $wpdb->prepare(
-					' AND ( wc_cidx.customer_email = %s OR wc_cidx.billing_email = %s ) ',
-					$wp_query->query_vars['wc_customer_email'],
-					$wp_query->query_vars['wc_customer_email']
+				$email = $wp_query->query_vars['wc_customer_email'];
+				$email = $this->convert_to_like( $email );
+				unset( $columns['customer_email'] );
+				unset( $columns['billing_email'] );
+				$parts[] = $wpdb->prepare(
+					'( wc_cidx.customer_email LIKE %s OR wc_cidx.billing_email LIKE %s )',
+					strtolower( $email ),
+					strtolower( $email )
 				);
 			}
 			if ( ! empty( $wp_query->query_vars['wc_customer_name'] ) ) {
-				$name   = '%' . $wpdb->esc_like( $wp_query->query_vars['wc_customer_name'] ) . '%';
-				$where .= $wpdb->prepare(
-					' AND ( wc_cidx.customer_name LIKE %s OR wc_cidx.billing_name LIKE %s OR wc_cidx.shipping_name LIKE %s ) ',
-					$name,
-					$name,
-					$name
+				$name = $wp_query->query_vars['wc_customer_name'];
+				$name = $this->convert_to_like( $name );
+				unset( $columns['customer_name'] );
+				unset( $columns['billing_name'] );
+				unset( $columns['shipping_name'] );
+				$parts[] = $wpdb->prepare(
+					'( wc_cidx.customer_name LIKE %s OR wc_cidx.billing_name LIKE %s OR wc_cidx.shipping_name LIKE %s )',
+					strtolower( $name ),
+					strtolower( $name ),
+					strtolower( $name )
+				);
+			}
+			if ( ! empty( $wp_query->query_vars['wc_customer_postcode'] ) ) {
+				$name = $wp_query->query_vars['wc_customer_postcode'];
+				$name = $this->convert_to_like( $name );
+				unset( $columns['billing_postcode'] );
+				unset( $columns['shipping_postcode'] );
+				$parts[] = $wpdb->prepare(
+					'( wc_cidx.billing_postcode LIKE %s OR wc_cidx.shipping_postcode LIKE %s )',
+					strtolower( $name ),
+					strtolower( $name )
+				);
+			}
+			if ( ! empty( $wp_query->query_vars['wc_customer_city'] ) ) {
+				$name = $wp_query->query_vars['wc_customer_city'];
+				$name = $this->convert_to_like( $name );
+				unset( $columns['billing_city'] );
+				unset( $columns['shipping_city'] );
+				$parts[] = $wpdb->prepare(
+					'( wc_cidx.billing_city LIKE %s OR wc_cidx.shipping_city LIKE %s )',
+					strtolower( $name ),
+					strtolower( $name )
 				);
 			}
 			if ( ! empty( $wp_query->query_vars['wc_order_id'] ) ) {
-				$where .= $wpdb->prepare( ' AND wc_cidx.order_id = %d ', $wp_query->query_vars['wc_order_id'] );
+				unset( $columns['order_id'] );
+				unset( $columns['order_number'] );
+				$parts[] = $wpdb->prepare( '( wc_cidx.order_id = %d OR wc_cidx.order_number = %d )', $wp_query->query_vars['wc_order_id'], $wp_query->query_vars['wc_order_id'] );
+			}
+
+			if ( ! empty( $wp_query->query_vars['wc_full_search'] ) ) {
+				$terms = explode( ' ', $wp_query->query_vars['wc_full_search'] );
+				$terms = array_filter( $terms );
+
+				$group = array();
+				foreach ( $terms as $term ) {
+					$this_columns = $columns;
+					if ( ! is_numeric( $term ) ) {
+						unset( $this_columns['order_id'] );
+						unset( $this_columns['user_id'] );
+					}
+
+					$term = $this->convert_to_like( $term );
+
+					foreach ( $this_columns as $col => $void ) {
+						$group[] = $wpdb->prepare( "wc_cidx.{$col} LIKE %s", $term ); // phpcs:ignore WordPress.DB.PreparedSQL
+					}
+				}
+
+				if ( ! empty( $group ) ) {
+					$parts[] = '( ' . implode( ' OR ', $group ) . ' )';
+				}
+			}
+
+			if ( ! empty( $parts ) ) {
+				$where .= ' AND ( ' . implode( ' AND ', $parts ) . ' ) ';
 			}
 
 			return $where;
@@ -435,23 +600,69 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 				return;
 			}
 
-			$search = trim( $wpq->query_vars['s'] );
+			$search = trim( wp_unslash( $wpq->query_vars['s'] ) );
+
+			$terms = array();
+
+			$search = preg_replace_callback(
+				'/(\S+)[:=](")?(\')?(.+?)(?(2)(?2)|(?(3)(?3)|(?=\s|$)))/',
+				function( $matches ) use ( &$terms ) {
+					$terms[ strtolower( $matches[1] ) ] = str_replace( '+', ' ', $matches[4] );
+					return '';
+				},
+				$search
+			);
+
+			$search = trim( $search );
 
 			$processing = false;
+
+			if ( is_email( $search ) ) {
+				$terms['email'] = $search;
+				$search         = '';
+			}
 
 			if ( substr( $search, 0, 1 ) === '#' ) {
 				$processing                     = true;
 				$wpq->query_vars['wc_order_id'] = substr( $search, 1 );
+				$search                         = '';
 			}
 
-			if ( is_email( $search ) ) {
-				$processing                           = true;
-				$wpq->query_vars['wc_customer_email'] = $search;
+			foreach ( $terms as $prop => $term ) {
+				switch ( $prop ) {
+					case 'email':
+					case 'mail':
+						$processing                           = true;
+						$wpq->query_vars['wc_customer_email'] = $terms[ $prop ];
+						break;
+
+					case 'name':
+						$processing                          = true;
+						$wpq->query_vars['wc_customer_name'] = trim( $terms[ $prop ] );
+						break;
+
+					case 'post':
+					case 'postal':
+					case 'zip':
+					case 'postcode':
+					case 'postalcode':
+					case 'zipcode':
+						$processing                              = true;
+						$wpq->query_vars['wc_customer_postcode'] = trim( $terms[ $prop ] );
+						break;
+
+					case 'suburb':
+					case 'address':
+					case 'city':
+						$processing                          = true;
+						$wpq->query_vars['wc_customer_city'] = trim( $terms[ $prop ] );
+						break;
+				}
 			}
 
-			if ( substr( $search, 0, 5 ) === 'name:' ) {
-				$processing                          = true;
-				$wpq->query_vars['wc_customer_name'] = trim( substr( $search, 5 ) );
+			if ( ! empty( $search ) ) {
+				$processing                        = true;
+				$wpq->query_vars['wc_full_search'] = $search;
 			}
 
 			if ( $processing ) {
