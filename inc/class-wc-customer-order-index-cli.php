@@ -104,7 +104,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index_CLI' ) ) {
 		private function should_kill_cli() {
 			global $wpdb;
 
-			$sql         = $wpdb->prepare( 'select option_value from wp_options where option_name = %s;', $this->cli_kill_switch );
+			$sql         = $wpdb->prepare( "select option_value from {$wpdb->options} where option_name = %s;", $this->cli_kill_switch );
 			$should_kill = absint( $wpdb->get_var( $sql ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
 
 			return $should_kill > 0 ? true : false;
