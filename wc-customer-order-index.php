@@ -394,7 +394,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			global $wpdb;
 
 			// Don't pull all guest orders this way, things may break.
-			if ( 0 === $user_id ) {
+			if ( 0 === intval( $user_id ) ) {
 				return array();
 			}
 
