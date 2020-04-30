@@ -1,4 +1,4 @@
-<?php
+<?php // phpcs:ignore WordPress.Files.FileName
 /**
  * Plugin Name:     WooCommerce - Customer Order Index
  * Plugin URI:      http://garman.io
@@ -19,6 +19,28 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 	class WC_Customer_Order_Index {
 
 		public $table_name = 'woocommerce_customer_order_index';
+
+		/**
+		 * The singleton instance of the plugin.
+		 *
+		 * @since    1.0.0
+		 * @access   private
+		 * @var      object    $instance    The singleton instance of the plugin.
+		 */
+		private static $instance = null;
+
+		/**
+		 * Retrieves or initialize an instance of this plugin's class.
+		 *
+		 * @since    1.0.0
+		 * @access   public
+		 */
+		public static function instance() {
+			if ( is_null( self::$instance ) ) {
+				self::$instance = new self();
+			}
+			return self::$instance;
+		}
 
 		/**
 		 * Construct the plugin.
@@ -86,11 +108,11 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			) $charset_collate;";
 
 			require_once ABSPATH . 'wp-admin/includes/upgrade.php';
-			dbDelta( $sql );
+			dbDelta( $sql ); // phpcs:ignore WordPressVIPMinimum.Functions.RestrictedFunctions.dbDelta_dbdelta
 		}
 
 		public function update_index_from_meta( $object_id, $meta_key, $meta_value ) {
-			if ( 'shop_order' == get_post_type( $object_id ) && in_array( $meta_key, array( '_customer_user', '_billing_email', '_billing_first_name', '_billing_last_name', '_shipping_first_name', '_shipping_last_name' ) ) ) {
+			if ( 'shop_order' === get_post_type( $object_id ) && in_array( $meta_key, array( '_customer_user', '_billing_email', '_billing_first_name', '_billing_last_name', '_shipping_first_name', '_shipping_last_name' ), true ) ) {
 				$this->update_index( $object_id );
 			}
 		}
@@ -135,6 +157,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			$shipping_name = trim( get_post_meta( $order_id, '_shipping_first_name', true ) . ' ' . get_post_meta( $order_id, '_shipping_last_name', true ) );
 
 			$sql = $wpdb->prepare(
+				// phpcs:ignore WordPress.DB.PreparedSQL
 				"INSERT INTO {$wpdb->prefix}{$this->table_name} (`order_id`,`user_id`,`customer_email`,`billing_email`,`customer_name`,`billing_name`,`shipping_name`) 
 				VALUES (%d, %d, %s, %s, %s, %s, %s) ON DUPLICATE KEY UPDATE `user_id` = %d, `customer_email` = %s, `billing_email` = %s, `customer_name` = %s, `billing_name` = %s, `shipping_name` = %s;",
 				$order_id,
@@ -152,7 +175,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 				$shipping_name
 			);
 
-			$result = $wpdb->query( $sql );
+			$result = $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
 			if ( ! is_wp_error( $result ) ) {
 				return (bool) $result;
 			} else {
@@ -169,13 +192,13 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			global $wpdb;
 			$user = get_user_by( 'id', $user_id );
 			$sql  = $wpdb->prepare(
-				"UPDATE {$wpdb->prefix}{$this->table_name} SET `customer_email` = %s, `customer_name` = %s WHERE `user_id` = %d",
+				"UPDATE {$wpdb->prefix}{$this->table_name} SET `customer_email` = %s, `customer_name` = %s WHERE `user_id` = %d", // phpcs:ignore WordPress.DB.PreparedSQL
 				$user->user_email,
 				trim( $user->first_name . ' ' . $user->last_name ),
 				$user_id
 			);
 
-			$result = $wpdb->query( $sql );
+			$result = $wpdb->query( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
 			if ( ! is_wp_error( $result ) ) {
 				return (bool) $result;
 			} else {
@@ -184,7 +207,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 		}
 
 		public function maybe_update_customer_name( $object_id, $meta_key, $meta_value ) {
-			if ( 'shop_order' == get_post_type( $object_id ) && in_array( $meta_key, array( 'first_name', 'last_name' ) ) ) {
+			if ( 'shop_order' === get_post_type( $object_id ) && in_array( $meta_key, array( 'first_name', 'last_name' ), true ) ) {
 				$this->update_customer( $object_id );
 			}
 		}
@@ -206,8 +229,8 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 		public function get_order_customer( $order_id ) {
 			global $wpdb;
 
-			$sql    = $wpdb->prepare( "SELECT `user_id` FROM {$wpdb->prefix}{$this->table_name} WHERE `order_id` = %d", $order_id );
-			$result = $wpdb->get_var( $sql );
+			$sql    = $wpdb->prepare( "SELECT `user_id` FROM {$wpdb->prefix}{$this->table_name} WHERE `order_id` = %d", $order_id ); // phpcs:ignore WordPress.DB.PreparedSQL
+			$result = $wpdb->get_var( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
 
 			if ( ! is_wp_error( $result ) ) {
 				return absint( $result );
@@ -226,12 +249,12 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 			global $wpdb;
 
 			// Don't pull all guest orders this way, things may break.
-			if ( 0 == $user_id ) {
+			if ( 0 === (int) $user_id ) {
 				return array();
 			}
 
-			$sql    = $wpdb->prepare( "SELECT `order_id` FROM {$wpdb->prefix}{$this->table_name} WHERE `user_id` = %d ORDER BY `order_id` DESC", $user_id );
-			$result = $wpdb->get_col( $sql );
+			$sql    = $wpdb->prepare( "SELECT `order_id` FROM {$wpdb->prefix}{$this->table_name} WHERE `user_id` = %d ORDER BY `order_id` DESC", $user_id );  // phpcs:ignore WordPress.DB.PreparedSQL
+			$result = $wpdb->get_col( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
 
 			if ( ! is_wp_error( $result ) && is_array( $result ) ) {
 				return $result;
@@ -248,10 +271,10 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 		public function get_guest_orders() {
 			global $wpdb;
 
-			$sql    = $wpdb->prepare( "SELECT `order_id` FROM {$wpdb->prefix}{$this->table_name} WHERE `user_id` = %d", 0 );
-			$result = $wpdb->get_col( $sql );
+			$sql    = $wpdb->prepare( "SELECT `order_id` FROM {$wpdb->prefix}{$this->table_name} WHERE `user_id` = %d", 0 ); // phpcs:ignore WordPress.DB.PreparedSQL
+			$result = $wpdb->get_col( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery, WordPress.DB.PreparedSQL
 
-			if ( ! is_wp_error( $result ) && is_array() ) {
+			if ( ! is_wp_error( $result ) && is_array( $result ) ) {
 				return $result;
 			} else {
 				return array();
@@ -279,7 +302,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 		 * @return array Query parameters
 		 */
 		public function my_orders_query( $params ) {
-			if ( isset( $params['meta_key'] ) && $params['meta_key'] == '_customer_user' ) {
+			if ( isset( $params['meta_key'] ) && '_customer_user' === $params['meta_key'] ) {
 				$params['wc_customer_user'] = $params['meta_value'];
 				unset( $params['meta_key'] );
 				unset( $params['meta_value'] );
@@ -288,7 +311,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 				$params['wc_customer_user'] = $params['customer'];
 				if ( ! version_compare( WC_VERSION, '2.7', '<' ) ) {
 					$data_store = WC_Data_Store::load( 'order' );
-					if ( $data_store->get_current_class_name() == 'WC_Order_Data_Store_CPT' ) {
+					if ( $data_store->get_current_class_name() === 'WC_Order_Data_Store_CPT' ) {
 						unset( $params['customer'] );
 					}
 				}
@@ -341,7 +364,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 					! empty( $wpq->query_vars['wc_customer_name'] ) ||
 					! empty( $wpq->query_vars['wc_order_id'] )
 				) && $wpq->query_vars['suppress_filters'] ) {
-				$wpq->query_vars['suppress_filters'] = false;
+				$wpq->query_vars['suppress_filters'] = false; // phpcs:ignore WordPressVIPMinimum.Hooks.PreGetPosts
 			}
 		}
 
@@ -408,7 +431,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 		 */
 		public function wc_email_search( $wpq ) {
 			global $pagenow;
-			if ( 'edit.php' != $pagenow || empty( $wpq->query_vars['s'] ) || $wpq->query_vars['post_type'] != 'shop_order' ) {
+			if ( 'edit.php' !== $pagenow || empty( $wpq->query_vars['s'] ) || 'shop_order' !== $wpq->query_vars['post_type'] ) {
 				return;
 			}
 
@@ -416,7 +439,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 
 			$processing = false;
 
-			if ( substr( $search, 0, 1 ) == '#' ) {
+			if ( substr( $search, 0, 1 ) === '#' ) {
 				$processing                     = true;
 				$wpq->query_vars['wc_order_id'] = substr( $search, 1 );
 			}
@@ -426,7 +449,7 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 				$wpq->query_vars['wc_customer_email'] = $search;
 			}
 
-			if ( substr( $search, 0, 5 ) == 'name:' ) {
+			if ( substr( $search, 0, 5 ) === 'name:' ) {
 				$processing                          = true;
 				$wpq->query_vars['wc_customer_name'] = trim( substr( $search, 5 ) );
 			}
@@ -444,19 +467,16 @@ if ( ! class_exists( 'WC_Customer_Order_Index' ) ) :
 
 	}
 
-	global $WC_Customer_Order_Index;
-	$WC_Customer_Order_Index = new WC_Customer_Order_Index( __FILE__ );
+	WC_Customer_Order_Index::instance();
 
 endif;
 
 /**
  * Get the WC Customer Order Index
  */
-function WC_COI() {
-	global $WC_Customer_Order_Index;
-
-	if ( class_exists( 'WC_Customer_Order_Index' ) && ! is_null( $WC_Customer_Order_Index ) ) {
-		return $WC_Customer_Order_Index;
+function WC_COI() { // phpcs:ignore WordPress.NamingConventions.ValidFunctionName
+	if ( class_exists( 'WC_Customer_Order_Index' ) && is_callable( array( 'WC_Customer_Order_Index', 'instance' ) ) ) {
+		return WC_Customer_Order_Index::instance();
 	} else {
 		return false;
 	}
